@@ -10,45 +10,72 @@ import re
 
 # this method is a slightly adjusted copy from
 # https://stackoverflow.com/questions/19039674/how-can-i-expand-this-gabor-patch-to-the-size-of-the-bounding-box
-"""
-    lambda_ : int
-        Spatial frequency (px per cycle)
-
-    theta : int or float
-        Grating orientation in degrees (0-180)
-
-    sigma : int or float
-        gaussian standard deviation (in pixels)
-
-    phase : float
-        phase offset of the grating, between 0 and 180
-
-    trim : float
-        used to cut the gaussian at some point
-        preventing it from continuing infinitely
-"""
 
 
 class GaborPatchDataset():
+    """
+    A class to generate a dataset of images containing Gabor patches
+    and noise patches.
+
+    Attributes
+    ----------
+    n_gabor_patches : int
+        Number of Gabor patches per image.
+    n_noise_patches : int
+        Number of noise patches per image.
+    output_path : str
+        Path where images and CSV file will be saved.
+    image_height : int
+        Height of each generated image.
+    gabor_patch_ratio : float
+        Ratio of the Gabor patch size to the image height.
+    n_rotations : int
+        Number of rotations for the experiment.
+    n_shifts : int
+        Number of shifts for the experiment.
+    n_images : int
+        Total number of images to generate.
+    shift_values : list
+        List of shift values for the experiment.
+    columns : list
+        List of column names for the CSV file.
+    df : pandas.DataFrame
+        DataFrame to store metadata of the generated images.
+
+    Methods
+    -------
+    set_experiment_type(experiment_type)
+        Parse the experiment type to determine rotations and shifts.
+    generate_dataset_images()
+        Generate dataset images with Gabor and noise patches.
+    generate_csv()
+        Save dataset metadata to a CSV file.
+    generate_dataset_image(n_gabor_patches, n_noise_patches,
+        image_height, orientation, shift_x, shift_y)
+        Generate a single dataset image with Gabor and noise patches.
+    generate_image(image_height)
+        Generate a blank image with a specified height.
+    insert_gabor_patch(patch_size, total_img, orientation, shift_x, shift_y)
+        Insert a Gabor patch into an image.
+    gabor_patch(size, lambda_, theta, sigma, phase, trim, binary)
+        Create a Gabor patch.
+    generate_random_shifts(n_shifts, image_height)
+        Generate random shifts for the Gabor patches.
+    generate_CmZn_transforms(m_rotations, n_shifts, shift_distance)
+        Generate transformations for the Gabor patches
+            based on rotations and shifts.
+    """
     def __init__(self, image_height=20,
                  n_gabor_patches=1, gabor_patch_ratio=0.8,
                  n_noise_patches=0, output_path="images/",
-                 experiment_type="SE2"):
-        """
-        Initialize the GaborPatchDataset class.
-
-        Parameters:
-            n_images (int): Number of images to generate.
-            n_gabor_patches (int): Number of Gabor patches per image.
-            n_noise_patches (int): Number of noise patches per image.
-            output_path (str): Path where images and CSV file will be saved.
-            image_height (int): Height of each generated image.
-        """
+                 experiment_type="C8_Z2_5"  # C8_Z2_5, C4
+                 ):
 
         self.n_gabor_patches = n_gabor_patches
         self.n_noise_patches = n_noise_patches
         self.output_path = output_path+experiment_type
         self.image_height = image_height
+        self.gabor_patch_ratio = gabor_patch_ratio
 
         # Ensure output directory exists
         Path(self.output_path).mkdir(parents=True, exist_ok=True)
@@ -58,7 +85,7 @@ class GaborPatchDataset():
             self.set_experiment_type(experiment_type)
         self.n_images = self.n_rotations + self.n_shifts * self.n_rotations
 
-        self.shift_values = self.generate_uniform_shifts(
+        self.shift_values = self.generate_CmZn_transforms(
             self.n_rotations, self.n_shifts, self.image_height // 4)
 
         # Define CSV column names
@@ -72,23 +99,16 @@ class GaborPatchDataset():
         self.generate_dataset_images()
 
     def set_experiment_type(self, experiment_type):
-        match = re.match(r"([a-zA-Z]+)(\d+)", experiment_type)
+        match = re.match(r"C(\d+)(_Z2_(\d+))?", experiment_type)
         if match:
-            experiment_type = match.group(1)
-            experiment_order = match.group(2)
+            rotations = int(match.group(1))  # Extract number of rotations
+            # Extract number of translations, default to 0
+            translations = int(match.group(3)) if match.group(3) else 0
+            print(f"Rotations: {rotations}, Translations: {translations}")
+            return rotations, translations
         else:
-            raise ValueError("Invalid experiment_type format")
-
-        if experiment_type.upper() == "C":
-            print("Cyclic group (rotations only, no shifts)")
-            return int(experiment_order), 0
-        elif experiment_type == "SE":
-            # TODO: criteria for shifts and rotations,
-            # or call it something else
-            print("SE group (rotations and shifts)")
-            return 8, 5
-        else:
-            raise ValueError("Unsupported experiment type")
+            raise ValueError("Invalid experiment_type format. \
+                             Expected format: 'C<number>_Z2_<number>'")
 
     def generate_dataset_images(self):
         """
@@ -135,7 +155,7 @@ class GaborPatchDataset():
                                shift_x=0,
                                shift_y=0
                                ):
-        patch_size = image_height * 0.5
+        patch_size = image_height * self.gabor_patch_ratio
 
         img = self.generate_image(image_height)
         if n_gabor_patches:
@@ -225,15 +245,15 @@ class GaborPatchDataset():
             shifts.append((shift_x, shift_y))
         return shifts
 
-    def generate_uniform_shifts(self, n_rotations, n_shifts, shift_distance):
+    def generate_CmZn_transforms(self, m_rotations, n_shifts, shift_distance):
         if n_shifts == 0:  # No shift, just angles
             return [(angle, 0, 0) for angle in
-                    np.linspace(0, 360, n_rotations, endpoint=False)]
+                    np.linspace(0, 360, m_rotations, endpoint=False)]
 
         all_shifts = []
 
-        for rot_idx in range(n_rotations):
-            rotation_angle = (rot_idx * 360 / n_rotations)  # Orientation angle
+        for rot_idx in range(m_rotations):
+            rotation_angle = (rot_idx * 360 / m_rotations)  # Orientation angle
 
             # Always include the (0,0) shift
             all_shifts.append((rotation_angle, 0, 0))
@@ -298,15 +318,18 @@ def add_noise_patches(img, number=5, max_diameter=70, min_diameter_scale=0.8):
 
 if __name__ == '__main__':
     FLAGS = get_args()
-    n_images = FLAGS.n_images
+    image_height = FLAGS.image_height
     n_gabor_patches = FLAGS.n_gabor_patches
+    gabor_patch_ratio = FLAGS.gabor_patch_ratio
     n_noise_patches = FLAGS.n_noise_patches
     output_path = FLAGS.output_path
-    image_height = FLAGS.image_height
+    experiment_type = FLAGS.experiment_type
 
     dataset = GaborPatchDataset(
+        image_height=image_height,
+        gabor_patch_ratio=gabor_patch_ratio,
         n_gabor_patches=n_gabor_patches,
         n_noise_patches=n_noise_patches,
         output_path=output_path,
-        image_height=image_height
+        experiment_type=experiment_type
     )
