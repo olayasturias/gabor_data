@@ -33,7 +33,7 @@ class GaborPatchDataset():
     def __init__(self, image_height=20,
                  n_gabor_patches=1, gabor_patch_ratio=0.8,
                  n_noise_patches=0, output_path="images/",
-                 experiment_type="C8"):
+                 experiment_type="SE2"):
         """
         Initialize the GaborPatchDataset class.
 
@@ -53,15 +53,20 @@ class GaborPatchDataset():
         # Ensure output directory exists
         Path(self.output_path).mkdir(parents=True, exist_ok=True)
 
+        # parse experiment type to determine rotations and shifts
+        self.n_rotations, self.n_shifts = \
+            self.set_experiment_type(experiment_type)
+        self.n_images = self.n_rotations + self.n_shifts * self.n_rotations
+
+        self.shift_values = self.generate_uniform_shifts(
+            self.n_rotations, self.n_shifts, self.image_height // 4)
+
         # Define CSV column names
         self.columns = ["image_name"] + [f"orientation_{i}"
-                                         for i in range(n_gabor_patches)]  # +\
-                                            # [f"shift_{i}"
-                                            #  for i in range(n_gabor_patches)]
-        # parse experiment type: separate letter from number
-        n_rotations, shift = self.set_experiment_type(experiment_type)
-
-        self.n_images = int(n_rotations + shift*n_rotations)
+                                         for i in range(n_gabor_patches)]
+        if self.n_shifts > 0:
+            self.columns += [f"shift_x_{i}" for i in range(n_gabor_patches)]
+            self.columns += [f"shift_y_{i}" for i in range(n_gabor_patches)]
 
         self.df = pd.DataFrame(columns=self.columns)
         self.generate_dataset_images()
@@ -74,29 +79,36 @@ class GaborPatchDataset():
         else:
             raise ValueError("Invalid experiment_type format")
 
-        if experiment_type == "C":
-            print("Cyclic group")
-            n_rotations = int(experiment_order)
-            shift = 0
-        elif experiment_type == "D":
-            print("Dihedral group")
-        elif experiment_type == "S":
-            print("Symmetric group")
-
-        return n_rotations, shift
+        if experiment_type.upper() == "C":
+            print("Cyclic group (rotations only, no shifts)")
+            return int(experiment_order), 0
+        elif experiment_type == "SE":
+            # TODO: criteria for shifts and rotations,
+            # or call it something else
+            print("SE group (rotations and shifts)")
+            return 8, 5
+        else:
+            raise ValueError("Unsupported experiment type")
 
     def generate_dataset_images(self):
         """
         Generate dataset images with Gabor and noise patches.
         """
-        for i in range(self.n_images):
-            orientation = i * 360 / self.n_images
-            img, orientations = self.generate_dataset_image(
+        # for i in range(self.n_images):
+        for i, (orientation, shift_x, shift_y) in enumerate(self.shift_values):
+            img, orientations, shifts = self.generate_dataset_image(
                 self.n_gabor_patches,
-                self.n_noise_patches, self.image_height, orientation)
+                self.n_noise_patches,
+                self.image_height,
+                orientation,
+                shift_x,
+                shift_y
+                )
 
             img_name = f"gabor{self.n_gabor_patches}_{i:06d}.png"
             row = [img_name] + orientations
+            if self.n_shifts > 0:
+                row += shifts
 
             # Append to DataFrame
             self.df = self.df.append(pd.Series(row, index=self.columns),
@@ -119,16 +131,20 @@ class GaborPatchDataset():
                                n_gabor_patches=None,
                                n_noise_patches=None,
                                image_height=20,
-                               orientation=0):
+                               orientation=0,
+                               shift_x=0,
+                               shift_y=0
+                               ):
         patch_size = image_height * 0.5
 
         img = self.generate_image(image_height)
         if n_gabor_patches:
-            img, orientations = self.insert_gabor_patch(
-                patch_size, img, orientation)
+            img, orientations, shifts = self.insert_gabor_patch(
+                patch_size, img, orientation, shift_x, shift_y
+            )
         if n_noise_patches:
             img = add_noise_patches(img, n_noise_patches, patch_size / 3)
-        return img, orientations
+        return img, orientations, shifts
 
     def generate_image(self, image_height):
         background_color = "#7f7f7f"
@@ -140,10 +156,12 @@ class GaborPatchDataset():
 
         return total_img
 
-    def insert_gabor_patch(self, patch_size, total_img, orientation):
+    def insert_gabor_patch(self, patch_size, total_img,
+                           orientation, shift_x=0, shift_y=0):
         lambda_ = 20
         sigma = 0
         orientations = []
+        shifts = [shift_x, shift_y]
         # orientation = np.random.uniform(0, 180)
         orientations.append(orientation)
         phase = 0  # np.random.uniform(0, 360)
@@ -155,10 +173,13 @@ class GaborPatchDataset():
             phase,
             binary=True
             )
-        total_img.paste(patch,
-                        (int((image_height - patch_size) / 2),
-                         int((image_height - patch_size) / 2)))
-        return total_img, orientations
+        center_x = (self.image_height - patch_size) // 2 + shift_x
+        center_y = (self.image_height - patch_size) // 2 + shift_y
+        # Ensure the patch stays within the image boundaries
+        center_x = int(max(0, min(center_x, self.image_height - patch_size)))
+        center_y = int(max(0, min(center_y, self.image_height - patch_size)))
+        total_img.paste(patch, (center_x, center_y))
+        return total_img, orientations, shifts
 
     def gabor_patch(self, size, lambda_, theta, sigma, phase,
                     trim=.005, binary=False):
@@ -193,6 +214,41 @@ class GaborPatchDataset():
         img_data = (grating + 1) / 2 * 255
 
         return Image.fromarray(img_data.astype(np.uint8))
+
+    def generate_random_shifts(self, n_shifts, image_height):
+        shifts = []
+        if n_shifts == 0:
+            return [(0, 0)]  # No shifts, only center position
+        for _ in range(n_shifts):
+            shift_x = np.random.randint(-image_height // 4, image_height // 4)
+            shift_y = np.random.randint(-image_height // 4, image_height // 4)
+            shifts.append((shift_x, shift_y))
+        return shifts
+
+    def generate_uniform_shifts(self, n_rotations, n_shifts, shift_distance):
+        if n_shifts == 0:  # No shift, just angles
+            return [(angle, 0, 0) for angle in
+                    np.linspace(0, 360, n_rotations, endpoint=False)]
+
+        all_shifts = []
+
+        for rot_idx in range(n_rotations):
+            rotation_angle = (rot_idx * 360 / n_rotations)  # Orientation angle
+
+            # Always include the (0,0) shift
+            all_shifts.append((rotation_angle, 0, 0))
+
+            # Generate the remaining shifts uniformly distributed in a circle
+            for shift_idx in range(n_shifts-1):
+                # Evenly distribute shifts around the circle
+                shift_angle = (shift_idx * 360 / (n_shifts-1))
+                rad = np.deg2rad(shift_angle)
+                shift_x = int(np.round(shift_distance * np.cos(rad)))
+                shift_y = int(np.round(shift_distance * np.sin(rad)))
+                # Append each shift with rotation
+                all_shifts.append((rotation_angle, shift_x, shift_y))
+
+        return all_shifts
 
 
 def add_noise_patch(img, diameter=50, center=(None, None)):
