@@ -73,12 +73,15 @@ class GaborPatchDataset():
 
         self.n_gabor_patches = n_gabor_patches
         self.n_noise_patches = n_noise_patches
-        self.output_path = output_path+experiment_type
+        self.output_path = Path(output_path) / experiment_type
         self.image_height = image_height
         self.gabor_patch_ratio = gabor_patch_ratio
 
         # Ensure output directory exists
         Path(self.output_path).mkdir(parents=True, exist_ok=True)
+        # print output path
+        print(f"Output path: {self.output_path}")
+        
 
         # parse experiment type to determine rotations and shifts
         self.n_rotations, self.n_shifts = \
@@ -131,8 +134,7 @@ class GaborPatchDataset():
                 row += shifts
 
             # Append to DataFrame
-            self.df = self.df.append(pd.Series(row, index=self.columns),
-                                     ignore_index=True)
+            self.df = pd.concat([self.df, pd.Series(row, index=self.columns).to_frame().T], ignore_index=True)
 
             # Save image
             print(f"Saving image {self.output_path}/{img_name}")
