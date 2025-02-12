@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-from PIL import Image
+from PIL import Image, ImageFilter
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -68,7 +68,8 @@ class GaborPatchDataset():
     def __init__(self, image_height=20,
                  n_gabor_patches=1, gabor_patch_ratio=0.8,
                  n_noise_patches=0, output_path="images/",
-                 experiment_type="C8_Z2_5"  # C8_Z2_5, C4
+                 experiment_type="C8_Z2_5",  # C8_Z2_5, C4
+                 sigma=0,
                  ):
 
         self.n_gabor_patches = n_gabor_patches
@@ -76,12 +77,12 @@ class GaborPatchDataset():
         self.output_path = Path(output_path) / experiment_type
         self.image_height = image_height
         self.gabor_patch_ratio = gabor_patch_ratio
+        self.sigma = sigma
 
         # Ensure output directory exists
         Path(self.output_path).mkdir(parents=True, exist_ok=True)
         # print output path
         print(f"Output path: {self.output_path}")
-        
 
         # parse experiment type to determine rotations and shifts
         self.n_rotations, self.n_shifts = \
@@ -125,7 +126,8 @@ class GaborPatchDataset():
                 self.image_height,
                 orientation,
                 shift_x,
-                shift_y
+                shift_y,
+                self.sigma
                 )
 
             img_name = f"gabor{self.n_gabor_patches}_{i:06d}.png"
@@ -155,14 +157,16 @@ class GaborPatchDataset():
                                image_height=20,
                                orientation=0,
                                shift_x=0,
-                               shift_y=0
+                               shift_y=0,
+                               sigma=0
                                ):
         patch_size = image_height * self.gabor_patch_ratio
 
         img = self.generate_image(image_height)
         if n_gabor_patches:
             img, orientations, shifts = self.insert_gabor_patch(
-                patch_size, img, orientation, shift_x, shift_y
+                patch_size, img, orientation, shift_x, shift_y,
+                sigma
             )
         if n_noise_patches:
             img = add_noise_patches(img, n_noise_patches, patch_size / 3)
@@ -179,9 +183,14 @@ class GaborPatchDataset():
         return total_img
 
     def insert_gabor_patch(self, patch_size, total_img,
-                           orientation, shift_x=0, shift_y=0):
+                           orientation, shift_x=0, shift_y=0,
+                           sigma=0):
         lambda_ = 20
-        sigma = 0
+        sigma = sigma
+        if sigma:
+            binary = False
+        else:
+            binary = True
         orientations = []
         shifts = [shift_x, shift_y]
         # orientation = np.random.uniform(0, 180)
@@ -191,9 +200,8 @@ class GaborPatchDataset():
             int(patch_size),
             lambda_,
             orientation,
-            sigma,
             phase,
-            binary=True
+            binary=binary
             )
         center_x = (self.image_height - patch_size) // 2 + shift_x
         center_y = (self.image_height - patch_size) // 2 + shift_y
@@ -201,9 +209,13 @@ class GaborPatchDataset():
         center_x = int(max(0, min(center_x, self.image_height - patch_size)))
         center_y = int(max(0, min(center_y, self.image_height - patch_size)))
         total_img.paste(patch, (center_x, center_y))
+        if sigma and sigma > 0:
+            kernel_size = int(sigma) | 1  # Make sure it's odd
+            total_img = total_img.filter(ImageFilter.GaussianBlur(radius=kernel_size))
+
         return total_img, orientations, shifts
 
-    def gabor_patch(self, size, lambda_, theta, sigma, phase,
+    def gabor_patch(self, size, lambda_, theta, phase,
                     trim=.005, binary=False):
         # Create normalized pixel coordinates and create meshgrid
         X = np.linspace(-size//2, size//2, size)
@@ -224,14 +236,6 @@ class GaborPatchDataset():
         if binary:
             grating = np.where(grating >= 0, 1, -1)
 
-        if sigma and sigma > 0:
-            # Create gaussian window
-            # The gaussian is centered at (0,0) and std is sigma
-            gauss = np.exp(
-                -((Xm ** 2) + (Ym ** 2)) / (2 * (sigma / float(size)) ** 2)
-                )
-            gauss[gauss < trim] = 0  # trim values smaller than trim
-            grating *= gauss
         # Normalize to range [0,1] and scale to 255
         img_data = (grating + 1) / 2 * 255
 
@@ -326,6 +330,7 @@ if __name__ == '__main__':
     n_noise_patches = FLAGS.n_noise_patches
     output_path = FLAGS.output_path
     experiment_type = FLAGS.experiment_type
+    sigma = FLAGS.sigma
 
     dataset = GaborPatchDataset(
         image_height=image_height,
@@ -333,5 +338,6 @@ if __name__ == '__main__':
         n_gabor_patches=n_gabor_patches,
         n_noise_patches=n_noise_patches,
         output_path=output_path,
-        experiment_type=experiment_type
+        experiment_type=experiment_type,
+        sigma=sigma
     )

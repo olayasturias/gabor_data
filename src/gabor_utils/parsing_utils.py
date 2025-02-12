@@ -23,4 +23,7 @@ def get_args():
     parser.add_argument('--experiment_type', type=str, default='C8',
                         help="The type of experiment to run. \
                         Options: Cx, Cx_Z2_y")
+    parser.add_argument('--sigma', type=float, default=0,
+                        help="The standard deviation of the gaussian \
+                        noise to add to the gabor patches")
     return parser.parse_args()
