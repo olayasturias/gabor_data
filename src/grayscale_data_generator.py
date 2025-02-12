@@ -169,7 +169,7 @@ class GaborPatchDataset():
                 sigma
             )
         if n_noise_patches:
-            img = add_noise_patches(img, n_noise_patches, patch_size / 3)
+            img = add_noise_patches(img, n_noise_patches, patch_size / n_noise_patches)
         return img, orientations, shifts
 
     def generate_image(self, image_height):
@@ -306,11 +306,11 @@ def add_noise_patch(img, diameter=50, center=(None, None)):
             if (coord_x > 0 and coord_x < img_width and
                 coord_y > 0 and coord_y < img_height and
                     ((x - radius) ** 2 + (y - radius) ** 2) < radius ** 2):
+                coord = (coord_x, coord_y)
+                value = (int(h[x, y]), int(s[x, y]), int(v[x, y]))
                 img.putpixel(
                     (coord_x, coord_y),
-                    (int(h[x, y]),
-                     int(s[x, y]),
-                     int(v[x, y])))
+                    int(h[x, y]))
     return img
 
 
