@@ -222,22 +222,27 @@ class GaborPatchDataset():
         Y = np.linspace(-size//2, size//2, size)
         Xm, Ym = np.meshgrid(X, Y)
 
-        # Sine wave frequency
-        # freq = size / float(lambda_)
+        # Convert angles
         thetaRad = np.deg2rad(theta)
         phaseRad = np.deg2rad(phase)
 
-        # Rotate coordinates to match theta orientation
+        # Rotate coordinates
         Xr = Xm * np.cos(thetaRad) + Ym * np.sin(thetaRad)
-        # Create sinusoidal grating with phaseshift phaserad
+
+        # Create sinusoidal grating
         grating = np.sin((2 * np.pi * Xr / lambda_) + phaseRad)
 
         # Convert to black & white (binary)
         if binary:
             grating = np.where(grating >= 0, 1, -1)
 
-        # Normalize to range [0,1] and scale to 255
-        img_data = (grating + 1) / 2 * 255
+        # Create a circular mask
+        radius = size // 2  # Radius of the circular mask
+        mask = (Xm**2 + Ym**2) <= radius**2  # Circle equation x² + y² <= r²
+
+        # Apply the circular mask
+        img_data = np.full_like(grating, 127)  # Background (gray)
+        img_data[mask] = (grating[mask] + 1) / 2 * 255  # Apply Gabor pattern inside the circle
 
         return Image.fromarray(img_data.astype(np.uint8))
 
