@@ -41,22 +41,35 @@ class GaborDataset(Dataset):
 
 
 class GaborDataModule(pl.LightningDataModule):
-    def __init__(self, csv_file, image_dir, batch_size=32, train_ratio=0.7):
+    def __init__(self,
+                 dataset_path,
+                 train_val_set,
+                 test_set,
+                 train_ratio=0.8,
+                 batch_size=32
+                 ):
         super().__init__()
-        self.csv_file = csv_file
-        self.image_dir = image_dir
+        self.dataset_path = dataset_path
+        self.train_val_set = train_val_set
+        self.test_set = test_set
         self.batch_size = batch_size
         self.train_ratio = train_ratio
 
     def setup(self, stage=None):
         """ Split dataset into train/val/test. """
-        dataset = GaborDataset(self.csv_file, self.image_dir)
+        train_val_csv_file = os.path.join(self.dataset_path,
+                                          self.train_val_set, "description.csv")
+        train_val_img_dir = os.path.join(self.dataset_path, self.train_val_set)
+        self.train_dataset = GaborDataset(train_val_csv_file, train_val_img_dir)
         train_size = self.train_ratio
-        test_size = 0.1
-        val_size = 1 - train_size - test_size
-        self.train_dataset, self.val_dataset, \
-            self.test_dataset = random_split(dataset,
-                                             [train_size, val_size, test_size])
+        val_size = 1 - train_size
+        self.train_dataset, self.val_dataset = random_split(self.train_dataset,
+                                                            [train_size,
+                                                             val_size])
+        test_csv_file = os.path.join(self.dataset_path,
+                                     self.test_set, "description.csv")
+        test_img_dir = os.path.join(self.dataset_path, self.test_set)
+        self.test_dataset = GaborDataset(test_csv_file, test_img_dir)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
@@ -70,8 +83,10 @@ class GaborDataModule(pl.LightningDataModule):
 
 # Initialize DataModule
 data_module = GaborDataModule(
-    csv_file="C:\\Users\\oat\\Datasets\\gabor_data\\C8_Z2_5\\description.csv",
-    image_dir="C:\\Users\\oat\\Datasets\\gabor_data\\C8_Z2_5",
+    dataset_path="C:\\Users\\oat\\Datasets\\gabor_data",
+    train_val_set="C4",
+    test_set="C4",
+    train_ratio=0.8,
     batch_size=1
 )
 
