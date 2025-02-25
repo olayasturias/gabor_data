@@ -18,7 +18,7 @@ def get_args():
                         help="Location for saving the images")
     parser.add_argument('--n_images', type=int, default=100,
                         help="The number of images generated")
-    parser.add_argument('--gabor_patch_ratio', type=float, default=0.5,
+    parser.add_argument('--patch_ratio', type=float, default=0.5,
                         help="The ratio of the gabor patches in the image")
     parser.add_argument('--experiment_type', type=str, default='C8',
                         help="The type of experiment to run. \
@@ -26,4 +26,6 @@ def get_args():
     parser.add_argument('--sigma', type=float, default=0,
                         help="The standard deviation of the gaussian \
                         noise to add to the gabor patches")
+    parser.add_argument('--n_png_patches', type=int, default=0,
+                        help="The number of png patches to add to the image")
     return parser.parse_args()
