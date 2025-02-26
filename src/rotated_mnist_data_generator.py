@@ -6,74 +6,17 @@ import pandas as pd
 from pathlib import Path
 from gabor_utils.parsing_utils import get_args
 import re
-
+import signal
 
 # this method is a slightly adjusted copy from
 # https://stackoverflow.com/questions/19039674/how-can-i-expand-this-gabor-patch-to-the-size-of-the-bounding-box
 
 
 class RotatedMNISTDataset():
-    """
-    A class to generate a dataset of images containing Gabor patches
-    and noise patches.
-
-    Attributes
-    ----------
-    n_gabor_patches : int
-        Number of Gabor patches per image.
-    n_noise_patches : int
-        Number of noise patches per image.
-    output_path : str
-        Path where images and CSV file will be saved.
-    image_height : int
-        Height of each generated image.
-    patch_ratio : float
-        Ratio of the Gabor patch size to the image height.
-    n_rotations : int
-        Number of rotations for the experiment.
-    n_shifts : int
-        Number of shifts for the experiment.
-    n_images : int
-        Total number of images to generate.
-    shift_values : list
-        List of shift values for the experiment.
-    columns : list
-        List of column names for the CSV file.
-    df : pandas.DataFrame
-        DataFrame to store metadata of the generated images.
-
-    Methods
-    -------
-    set_experiment_type(experiment_type)
-        Parse the experiment type to determine rotations and shifts.
-    generate_dataset_images()
-        Generate dataset images with Gabor and noise patches.
-    generate_csv()
-        Save dataset metadata to a CSV file.
-    generate_dataset_image(n_gabor_patches, n_noise_patches,
-        image_height, orientation, shift_x, shift_y)
-        Generate a single dataset image with Gabor and noise patches.
-    generate_image(image_height)
-        Generate a blank image with a specified height.
-    insert_gabor_patch(patch_size, total_img, orientation, shift_x, shift_y)
-        Insert a Gabor patch into an image.
-    gabor_patch(size, lambda_, theta, sigma, phase, trim, binary)
-        Create a Gabor patch.
-    generate_random_shifts(n_shifts, image_height)
-        Generate random shifts for the Gabor patches.
-    generate_CmZn_transforms(m_rotations, n_shifts, shift_distance)
-        Generate transformations for the Gabor patches
-            based on rotations and shifts.
-    """
-    def __init__(self, image_height=20,
-                 patch_ratio=0.5,
-                 n_png_patches=1,
-                 n_noise_patches=0,
-                 output_path="images/",
-                 experiment_type="C8_Z2_5",  # C8_Z2_5, C4
-                 mnist_path="C:\\Users\\oat\\Datasets\\MNIST_CSV",
-                 sigma=0,
-                 ):
+    def __init__(self, image_height=20, patch_ratio=0.5, n_png_patches=1,
+                 n_noise_patches=0, output_path="images/",
+                 experiment_type="C8_Z2_5", mnist_path="C:\\Users\\oat\\Datasets\\MNIST_CSV",
+                 sigma=0):
 
         self.n_png_patches = n_png_patches
         self.n_noise_patches = n_noise_patches
@@ -82,33 +25,35 @@ class RotatedMNISTDataset():
         self.patch_ratio = patch_ratio
         self.sigma = sigma
 
-        # Ensure output directory exists
         Path(self.output_path).mkdir(parents=True, exist_ok=True)
-        # print output path
-        print(f"Output path: {self.output_path}")
 
         # Parse MNIST data
         n_mnist, self.mnist_data = self.parse_mnist(mnist_path)
 
-        # parse experiment type to determine rotations and shifts
-        self.n_rotations, self.n_shifts = \
-            self.set_experiment_type(experiment_type)
+        self.n_rotations, self.n_shifts = self.set_experiment_type(experiment_type)
         self.n_images = (self.n_rotations + self.n_shifts * self.n_rotations) * n_mnist
 
-        self.shift_values = self.generate_CmZn_transforms(
-            self.n_rotations, self.n_shifts, self.image_height // 4)
+        self.shift_values = self.generate_CmZn_transforms(self.n_rotations, self.n_shifts, self.image_height // 4)
 
-        # Define CSV column names
-        self.columns = ["image_name"] + [f"orientation_{i}"
-                                         for i in range(n_png_patches)]
+        self.columns = ["image_name"] + [f"orientation_{i}" for i in range(n_png_patches)]
         if self.n_shifts > 0:
             self.columns += [f"shift_x_{i}" for i in range(n_png_patches)]
             self.columns += [f"shift_y_{i}" for i in range(n_png_patches)]
-        # Add digit label column
         self.columns += ["label"]
 
         self.df = pd.DataFrame(columns=self.columns)
+
+        # Track interrupted process
+        self.interrupted = False
+        signal.signal(signal.SIGINT, self.handle_interrupt)
+
         self.generate_dataset_images()
+
+    def handle_interrupt(self, signum, frame):
+        """ Handle keyboard interrupt and ensure the CSV is saved. """
+        print("\nProcess interrupted. Saving progress...")
+        self.generate_csv()
+        self.interrupted = True
 
     def parse_mnist(self, mnist_path):
         # read csv files with mnist data
@@ -136,22 +81,22 @@ class RotatedMNISTDataset():
                              Expected format: 'C<number>_Z2_<number>'")
 
     def generate_dataset_images(self):
-        """
-        Generate dataset images with MNIST digits and noise patches
-        """
+        """ Generate dataset images and resume if interrupted. """
         mnist_images, mnist_labels = self.mnist_data
+        existing_images = self.get_processed_images()
+
         for idx, (mnist_image, mnist_label) in enumerate(zip(mnist_images, mnist_labels)):
-            # for i in range(self.n_images):
+            if idx in existing_images:
+                continue  # Skip already processed MNIST rows
+
             for i, (orientation, shift_x, shift_y) in enumerate(self.shift_values):
+                if self.interrupted:
+                    return  # Stop processing immediately if interrupted
+
                 img, orientations, shifts = self.generate_dataset_image(
-                    mnist_image,
-                    self.n_noise_patches,
-                    self.image_height,
-                    orientation,
-                    shift_x,
-                    shift_y,
-                    self.sigma
-                    )
+                    mnist_image, self.n_noise_patches, self.image_height,
+                    orientation, shift_x, shift_y, self.sigma
+                )
 
                 img_name = f"mnist_digit_{mnist_label}_img_{idx:06d}_transformation_{i:03d}.png"
                 row = [img_name] + orientations
@@ -159,24 +104,26 @@ class RotatedMNISTDataset():
                     row += shifts
                 row += [mnist_label]
 
-                # Append to DataFrame
                 self.df = pd.concat([self.df, pd.Series(row, index=self.columns).to_frame().T], ignore_index=True)
 
-                # Save image
                 print(f"Saving image {self.output_path}/{img_name}")
                 img.save(f"{self.output_path}/{img_name}")
-            #     if i % 10:
-            #         break
 
-            # if idx % 10:
-            #     break
+            self.generate_csv()  # Save progress after processing each MNIST row
 
-        self.generate_csv()  # Save dataset description to CSV
+    def get_processed_images(self):
+        """ Read description.csv and extract processed MNIST indices. """
+        csv_path = f"{self.output_path}/description.csv"
+        if Path(csv_path).exists():
+            existing_df = pd.read_csv(csv_path)
+            processed_indices = set(
+                int(re.search(r"img_(\d+)", img).group(1)) for img in existing_df["image_name"]
+            )
+            return processed_indices
+        return set()
 
     def generate_csv(self):
-        """
-        Save dataset metadata to a CSV file.
-        """
+        """ Save dataset metadata to a CSV file. """
         csv_path = f"{self.output_path}/description.csv"
         self.df.to_csv(csv_path, index=False)
 
