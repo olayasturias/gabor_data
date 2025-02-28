@@ -74,7 +74,13 @@ class MNISTDataModule(pl.LightningDataModule):
         self.train_dataset, self.val_dataset = random_split(self.train_dataset,
                                                             [train_size,
                                                              val_size])
+
+    def analyze_data_distribution(self):
+        import matplotlib.pyplot as plt
+        train_val_csv_file = os.path.join(self.dataset_path,
+                                          self.train_val_set, "description.csv")
         
+
         # Load CSV to analyze balance
         df = pd.read_csv(train_val_csv_file)
 
@@ -88,7 +94,7 @@ class MNISTDataModule(pl.LightningDataModule):
         shift_x_counts = df['shift_x_0'].value_counts().sort_index()
         shift_y_counts = df['shift_y_0'].value_counts().sort_index()
 
-        # Plot distributions
+        # # Plot distributions
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
         axes[0, 0].bar(digit_counts.index, digit_counts.values)
@@ -130,22 +136,25 @@ class MNISTDataModule(pl.LightningDataModule):
         return DataLoader(self.test_dataset, batch_size=1, shuffle=False)
 
 
-# Initialize DataModule
-data_module = MNISTDataModule(
-    dataset_path="C:\\Users\\oat\\Datasets\\mnist_data",
-    train_val_set="C8_Z2_5",
-    test_set="C8_Z2_5",
-    train_ratio=0.8,
-    batch_size=1
-)
 
-# Load data
-data_module.setup()
+if __name__ == "__main__":
+    # Initialize DataModule
+    data_module = MNISTDataModule(
+        dataset_path="C:\\Users\\oat\\Datasets\\mnist_data",
+        train_val_set="C8_Z2_5",
+        test_set="C8_Z2_5",
+        train_ratio=0.8,
+        batch_size=1
+    )
 
-# Get one batch
-train_loader = data_module.train_dataloader()
-images, labels = next(iter(train_loader))
+    # Load data
+    data_module.setup()
+    data_module.analyze_data_distribution()
 
-# Check shapes
-print(f"Image batch shape: {images.shape}")  # Expected: (batch_size, 1, 128, 128)
-print(f"Label batch shape: {labels.shape}")  # Expected: (batch_size, n_labels)
+    # Get one batch
+    train_loader = data_module.train_dataloader()
+    images, labels = next(iter(train_loader))
+
+    # Check shapes
+    print(f"Image batch shape: {images.shape}")  # Expected: (batch_size, 1, 128, 128)
+    print(f"Label batch shape: {labels.shape}")  # Expected: (batch_size, n_labels)
