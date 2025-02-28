@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+import csv
 from PIL import Image, ImageFilter
 import numpy as np
 import pandas as pd
@@ -7,6 +8,7 @@ from pathlib import Path
 from gabor_utils.parsing_utils import get_args
 import re
 import signal
+from tqdm import tqdm
 
 # this method is a slightly adjusted copy from
 # https://stackoverflow.com/questions/19039674/how-can-i-expand-this-gabor-patch-to-the-size-of-the-bounding-box
@@ -15,7 +17,7 @@ import signal
 class RotatedMNISTDataset():
     def __init__(self, image_height=20, patch_ratio=0.5, n_png_patches=1,
                  n_noise_patches=0, output_path="images/",
-                 experiment_type="C8_Z2_5", mnist_path="C:\\Users\\oat\\Datasets\\MNIST_CSV",
+                 experiment_type="C8_Z2_5", mnist_path="C:\\Users\\oat\\Documents\\Datasets\\MNIST",
                  sigma=0):
 
         self.n_png_patches = n_png_patches
@@ -31,7 +33,7 @@ class RotatedMNISTDataset():
         n_mnist, self.mnist_data = self.parse_mnist(mnist_path)
 
         self.n_rotations, self.n_shifts = self.set_experiment_type(experiment_type)
-        self.n_images = (self.n_rotations + self.n_shifts * self.n_rotations) * n_mnist
+        self.n_images = (self.n_shifts * self.n_rotations) * n_mnist
 
         self.shift_values = self.generate_CmZn_transforms(self.n_rotations, self.n_shifts, self.image_height // 4)
 
@@ -42,17 +44,30 @@ class RotatedMNISTDataset():
         self.columns += ["label"]
 
         self.df = pd.DataFrame(columns=self.columns)
+        
+        # Open CSV file for appending
+        self.csv_path = f"{self.output_path}/description.csv"
+        self.csv_file, self.csv_writer, self.existing_images = self.get_processed_images()
+        
+        existing_imgs = len(self.existing_images)
+        generated_imgs =  (self.n_shifts * self.n_rotations) * existing_imgs
+        print("found ", generated_imgs, " images generated from ", existing_imgs, "mnist images")
+        print("Generating ", self.n_images, " images in total")
+
 
         # Track interrupted process
         self.interrupted = False
         signal.signal(signal.SIGINT, self.handle_interrupt)
 
         self.generate_dataset_images()
+        
+        # Close CSV file when done
+        self.close_csv()
 
     def handle_interrupt(self, signum, frame):
         """ Handle keyboard interrupt and ensure the CSV is saved. """
         print("\nProcess interrupted. Saving progress...")
-        self.generate_csv()
+        self.close_csv()
         self.interrupted = True
 
     def parse_mnist(self, mnist_path):
@@ -83,10 +98,9 @@ class RotatedMNISTDataset():
     def generate_dataset_images(self):
         """ Generate dataset images and resume if interrupted. """
         mnist_images, mnist_labels = self.mnist_data
-        existing_images = self.get_processed_images()
-
-        for idx, (mnist_image, mnist_label) in enumerate(zip(mnist_images, mnist_labels)):
-            if idx in existing_images:
+        generated_imgs_size = len(self.existing_images)
+        for idx, (mnist_image, mnist_label) in tqdm(enumerate(zip(mnist_images, mnist_labels)), total=len(mnist_images)):
+            if idx < generated_imgs_size:
                 continue  # Skip already processed MNIST rows
 
             for i, (orientation, shift_x, shift_y) in enumerate(self.shift_values):
@@ -99,33 +113,58 @@ class RotatedMNISTDataset():
                 )
 
                 img_name = f"mnist_digit_{mnist_label}_img_{idx:06d}_transformation_{i:03d}.png"
-                row = [img_name] + orientations
+                img_path = Path(self.output_path) / str(mnist_label)
+                img_path.mkdir(parents=True, exist_ok=True)
+                img_file = Path(img_path)/img_name
+                img_rel_path = str(mnist_label)+"/"+img_name
+                row = [img_rel_path] + orientations
                 if self.n_shifts > 0:
                     row += shifts
                 row += [mnist_label]
 
-                self.df = pd.concat([self.df, pd.Series(row, index=self.columns).to_frame().T], ignore_index=True)
 
-                print(f"Saving image {self.output_path}/{img_name}")
-                img.save(f"{self.output_path}/{img_name}")
+                # Append new row to CSV file
+                self.csv_writer.writerow(row)
+                self.csv_file.flush()
 
-            self.generate_csv()  # Save progress after processing each MNIST row
+                # print(f"Saving image {self.output_path}/{img_name}")
+                img.save(img_file)
 
     def get_processed_images(self):
-        """ Read description.csv and extract processed MNIST indices. """
-        csv_path = f"{self.output_path}/description.csv"
+        """ Open description.csv in append mode and read processed images. """
+        csv_path = self.csv_path
+        processed_indices = set()
+
+        # Open the CSV file in append mode
+        file = open(csv_path, 'a', newline='') if Path(csv_path).exists() else open(csv_path, 'w', newline='')
+        writer = csv.writer(file)
+
+        # Read existing data to track processed indices
         if Path(csv_path).exists():
-            existing_df = pd.read_csv(csv_path)
-            processed_indices = set(
-                int(re.search(r"img_(\d+)", img).group(1)) for img in existing_df["image_name"]
-            )
-            return processed_indices
-        return set()
+            with open(csv_path, 'r', newline='') as f:
+                reader = csv.reader(f)
+                header = next(reader, None)  # Skip header if it exists
+                for row in reader:
+                    match = re.search(r"img_(\d+)", row[0])
+                    if match:
+                        processed_indices.add(int(match.group(1)))
+
+        # If new file, write header
+        if not processed_indices:
+            writer.writerow(self.columns)
+
+        return file, writer, processed_indices
 
     def generate_csv(self):
         """ Save dataset metadata to a CSV file. """
         csv_path = f"{self.output_path}/description.csv"
         self.df.to_csv(csv_path, index=False)
+        
+    def close_csv(self):
+        """ Close the CSV file safely. """
+        if self.csv_file:
+            self.csv_file.close()
+            print("CSV file closed.")
 
     def generate_dataset_image(self,
                                png_patch=None,
